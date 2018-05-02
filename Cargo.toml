@@ -19,3 +19,7 @@ path = "src/single_threaded.rs"
 [[bin]]
 name = "rayon"
 path = "src/rayon.rs"
+
+[profile.release]
+debug = true
+lto = true

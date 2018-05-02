@@ -5,12 +5,14 @@ extern crate serde_derive;
 extern crate chrono;
 extern crate rayon;
 
+use std::boxed::Box;
 use std::env;
 use std::fs::File;
-use std::io;
 use std::iter::Sum;
+use std::str::{self, FromStr};
 
 use chrono::{DateTime, Utc, Duration};
+use csv::{ByteRecord, ReaderBuilder};
 use flate2::read::GzDecoder;
 use rayon::prelude::*;
 
@@ -51,19 +53,26 @@ fn main() {
     println!("{} / {} = {:.2}%", stats.recent, stats.total, percent);
 }
 
-fn count(path: &str, cutoff: DateTime<Utc>) -> Result<Stats, io::Error> {
+fn count(path: &str, cutoff: DateTime<Utc>) -> Result<Stats, Box<std::error::Error>> {
     let mut input_file = File::open(&path)?;
     let decoder = GzDecoder::new(&mut input_file)?;
-    let mut reader = csv::ReaderBuilder::new()
+    let mut reader = ReaderBuilder::new()
         .has_headers(false)
         .from_reader(decoder);
+    let mut record = ByteRecord::new();
 
     let mut total = 0;
-    let recent = reader.deserialize::<Row>()
-        .flat_map(|row| row)  // Unwrap Somes, and skip Nones
-        .inspect(|_| total += 1)
-        .filter(|row| row.last_modified_date > cutoff)
-        .count();
+    let mut recent = 0;
+    while let Ok(true) = reader.read_byte_record(&mut record) {
+        total += 1;
+        if let Some(bytes) = record.get(3) {
+            let s = str::from_utf8(bytes)?;
+            let dt = DateTime::<Utc>::from_str(s)?;
+            if dt > cutoff {
+                recent += 1
+            }
+        }
+    }
 
     Ok(Stats { total, recent })
 }
