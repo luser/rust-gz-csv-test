@@ -11,6 +11,7 @@ serde_derive = "*"
 chrono = { version = "*", features = ["serde"] }
 scoped_threadpool = "*"
 rayon = "*"
+nom = "3.2.1"
 
 [[bin]]
 name = "single_threaded"
