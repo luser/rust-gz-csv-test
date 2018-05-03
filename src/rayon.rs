@@ -4,6 +4,9 @@ extern crate chrono;
 #[macro_use]
 extern crate nom;
 extern crate rayon;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
 
 use std::boxed::Box;
 use std::env;
@@ -15,6 +18,7 @@ use chrono::{DateTime, Duration, NaiveDate, NaiveTime, NaiveDateTime, Utc};
 use csv::{ByteRecord, ReaderBuilder};
 use flate2::read::GzDecoder;
 use rayon::prelude::*;
+use serde::{Deserialize, Deserializer};
 
 named!(int32_4 <&str, i32>,
     map_res!(take!(4), FromStr::from_str)
@@ -52,6 +56,25 @@ named!(rfc3339<&str, DateTime<Utc>>,
   )
 );
 
+
+fn deserialize_rfc3339<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+    where D: Deserializer<'de>
+{
+    let s: &'de str = Deserialize::deserialize(deserializer)?;
+    rfc3339(s).to_full_result().or(Err(serde::de::Error::custom("error parsing date")))
+}
+
+#[derive(Debug, Deserialize)]
+struct Row<'a> {
+    bucket: &'a str,
+    key: &'a str,
+    size: usize,
+    #[serde(deserialize_with = "deserialize_rfc3339")]
+    last_modified_date: DateTime<Utc>,
+    etag: &'a str,
+}
+
+
 struct Stats {
     total: usize,
     recent: usize,
@@ -67,8 +90,6 @@ impl Sum for Stats {
         acc
     }
 }
-
-// 2008-09-08T22:47:31Z
 
 fn main() {
     let cutoff = Utc::now() - Duration::days(180);
@@ -88,19 +109,18 @@ fn count(path: &str, cutoff: DateTime<Utc>) -> Result<Stats, Box<std::error::Err
     let mut reader = ReaderBuilder::new()
         .has_headers(false)
         .from_reader(decoder);
-    let mut record = ByteRecord::new();
 
     let mut total = 0;
     let mut recent = 0;
+    // Use read_byte_record so we can reuse a single record for every row and borrow
+    // the fields from it.
+    let mut record = ByteRecord::new();
     while let Ok(true) = reader.read_byte_record(&mut record) {
         total += 1;
-        if let Some(bytes) = record.get(3) {
-            let s = str::from_utf8(bytes)?;
-            rfc3339(s).map(|dt| {
-                if dt > cutoff {
-                    recent += 1
-                }
-            });
+        if let Ok(row) = record.deserialize::<Row>(None) {
+            if row.last_modified_date > cutoff {
+                recent += 1
+            }
         }
     }
 
